@@ -1,0 +1,54 @@
+=== Tennis Predictor - Training Metrics ===
+
+Model: RandomForestClassifier (trained on full dataset)
+Cross-Validation: 5-fold Time-Series Split
+Primary Metric: Log Loss
+
+CROSS-VALIDATION RESULTS:
+log_loss_cv_mean=0.598298
+log_loss_cv_std=0.017883
+
+BEST HYPERPARAMETERS:
+best_params={
+"n_estimators": 100,
+"min_samples_split": 10,
+"min_samples_leaf": 3,
+"max_features": "sqrt",
+"max_depth": 8,
+"bootstrap": true
+}
+
+DATASET INFO:
+total_samples=50606
+total_features=27
+player1_wins=25301
+player2_wins=25305
+
+FEATURE LIST:
+1. rank_diff
+2. pts_diff
+3. pts_ratio
+4. Round_num
+5. Best of
+6. Surface_Carpet
+7. Surface_Clay
+8. Surface_Grass
+9. Surface_Hard
+10. Series_ATP250
+11. Series_ATP500
+12. Series_Grand Slam
+13. Series_International
+14. Series_International Gold
+15. Series_Masters
+16. Series_Masters 1000
+17. Series_Masters Cup
+18. Court_Indoor
+19. Court_Outdoor
+20. p1_lastN_winrate
+21. p2_lastN_winrate
+22. p1_surf_lastN_winrate
+23. p2_surf_lastN_winrate
+24. p1_h2h_winrate
+25. p1_elo_surface
+26. p2_elo_surface
+27. elo_surface_diff
