@@ -5,3 +5,6 @@ xgboost
 scipy
 matplotlib
 streamlit
+fastapi
+uvicorn
+requests
