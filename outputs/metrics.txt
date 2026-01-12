@@ -5,24 +5,24 @@ Cross-Validation: 5-fold Time-Series Split
 Primary Metric: Log Loss
 
 CROSS-VALIDATION RESULTS:
-log_loss_cv_mean=0.598298
-log_loss_cv_std=0.017883
+log_loss_cv_mean=0.606733
+log_loss_cv_std=0.017593
 
 BEST HYPERPARAMETERS:
 best_params={
-"n_estimators": 100,
-"min_samples_split": 10,
-"min_samples_leaf": 3,
+"n_estimators": 500,
+"min_samples_split": 2,
+"min_samples_leaf": 5,
 "max_features": "sqrt",
-"max_depth": 8,
+"max_depth": 6,
 "bootstrap": true
 }
 
 DATASET INFO:
-total_samples=50606
+total_samples=38966
 total_features=27
-player1_wins=25301
-player2_wins=25305
+player1_wins=19482
+player2_wins=19484
 
 FEATURE LIST:
 1. rank_diff
@@ -30,25 +30,25 @@ FEATURE LIST:
 3. pts_ratio
 4. Round_num
 5. Best of
-6. Surface_Carpet
-7. Surface_Clay
-8. Surface_Grass
-9. Surface_Hard
-10. Series_ATP250
-11. Series_ATP500
-12. Series_Grand Slam
-13. Series_International
-14. Series_International Gold
-15. Series_Masters
-16. Series_Masters 1000
-17. Series_Masters Cup
-18. Court_Indoor
-19. Court_Outdoor
-20. p1_lastN_winrate
-21. p2_lastN_winrate
-22. p1_surf_lastN_winrate
-23. p2_surf_lastN_winrate
-24. p1_h2h_winrate
-25. p1_elo_surface
-26. p2_elo_surface
-27. elo_surface_diff
+6. Surface_Clay
+7. Surface_Grass
+8. Surface_Hard
+9. Series_ATP250
+10. Series_ATP500
+11. Series_Grand Slam
+12. Series_Masters 1000
+13. Series_Masters Cup
+14. Court_Indoor
+15. Court_Outdoor
+16. p1_lastN_winrate
+17. p2_lastN_winrate
+18. p1_surf_lastN_winrate
+19. p2_surf_lastN_winrate
+20. p1_h2h_winrate
+21. p1_elo_surface
+22. p2_elo_surface
+23. elo_surface_diff
+24. p1_elo_tournament
+25. p2_elo_tournament
+26. elo_tournament_diff
+27. tournament_unpredictability

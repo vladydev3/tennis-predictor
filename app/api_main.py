@@ -4,6 +4,7 @@ from typing import Optional, Dict, Any
 import pandas as pd
 import joblib
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 # Reuse prediction utilities
@@ -13,8 +14,19 @@ repo_root = Path(__file__).resolve().parents[1]
 MODEL_PATH = repo_root / "models" / "rf_model.joblib"
 DATA_PATH = repo_root / "data" / "atp_preprocessed.csv"
 ELO_PATH = repo_root / "data" / "elo_ratings.json"
+TOUR_ELO_PATH = repo_root / "data" / "tournament_elo_ratings.json"
+TOUR_STATS_PATH = repo_root / "data" / "tournament_stats.json"
 
 app = FastAPI(title="Tennis Predictor API", version="1.0.0")
+
+# CORS: permitir acceso desde el frontend en desarrollo
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Global state
 model = None
@@ -27,6 +39,7 @@ class CustomPredictRequest(BaseModel):
     Player_2: str
     Date: str  # ISO date string
     Surface: Optional[str] = None
+    Tournament: Optional[str] = None
     Rank_1: Optional[float] = None
     Rank_2: Optional[float] = None
     Pts_1: Optional[float] = None
@@ -72,6 +85,23 @@ def load_resources():
         import json
         with open(ELO_PATH, "r", encoding="utf-8") as f:
             elo_ratings = json.load(f)
+    # Optional tournament ELO and stats
+    if TOUR_ELO_PATH.exists():
+        import json as _json
+        with open(TOUR_ELO_PATH, "r", encoding="utf-8") as f:
+            tour_elo_ratings = _json.load(f)
+    else:
+        tour_elo_ratings = None
+
+    if TOUR_STATS_PATH.exists():
+        import json as _json2
+        with open(TOUR_STATS_PATH, "r", encoding="utf-8") as f:
+            tour_stats = _json2.load(f)
+    else:
+        tour_stats = None
+    # expose to module-level
+    globals()['tour_elo_ratings'] = tour_elo_ratings
+    globals()['tour_stats'] = tour_stats
 
 
 @app.get("/health")
@@ -89,6 +119,7 @@ def predict_custom_endpoint(req: CustomPredictRequest):
         "Player_2": req.Player_2,
         "Date": pd.to_datetime(req.Date, errors="coerce"),
         "Surface": req.Surface,
+        "Tournament": req.Tournament,
         "Rank_1": req.Rank_1,
         "Rank_2": req.Rank_2,
         "Pts_1": req.Pts_1,
@@ -102,7 +133,7 @@ def predict_custom_endpoint(req: CustomPredictRequest):
         raise HTTPException(status_code=400, detail="Invalid Date format")
 
     try:
-        pred, proba, X = predict_custom(preprocessed_df, model, match_info, elo_ratings)
+        pred, proba, X = predict_custom(preprocessed_df, model, match_info, elo_ratings, globals().get('tour_elo_ratings'), globals().get('tour_stats'))
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

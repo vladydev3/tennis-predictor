@@ -40,7 +40,7 @@ def prepare_features(df: pd.DataFrame):
             feature_cols.append(c)
 
     # Historical features added by preprocess
-    for hist in ['p1_lastN_winrate', 'p2_lastN_winrate', 'p1_surf_lastN_winrate', 'p2_surf_lastN_winrate', 'p1_h2h_winrate', 'p1_elo_surface', 'p2_elo_surface', 'elo_surface_diff']:
+    for hist in ['p1_lastN_winrate', 'p2_lastN_winrate', 'p1_surf_lastN_winrate', 'p2_surf_lastN_winrate', 'p1_h2h_winrate', 'p1_elo_surface', 'p2_elo_surface', 'elo_surface_diff', 'p1_elo_tournament', 'p2_elo_tournament', 'elo_tournament_diff', 'tournament_unpredictability']:
         if hist in df.columns:
             feature_cols.append(hist)
 
@@ -57,6 +57,16 @@ def prepare_features(df: pd.DataFrame):
     for elo_col in ['p1_elo_surface', 'p2_elo_surface']:
         if elo_col in df.columns:
             df[elo_col] = df[elo_col].fillna(1500)
+    # Tournament ELO imputation
+    for elo_col in ['p1_elo_tournament', 'p2_elo_tournament']:
+        if elo_col in df.columns:
+            df[elo_col] = df[elo_col].fillna(1500)
+    if 'elo_tournament_diff' in df.columns:
+        df['elo_tournament_diff'] = df['elo_tournament_diff'].fillna(0)
+    # Tournament unpredictability: fill missing with global mean if available
+    if 'tournament_unpredictability' in df.columns:
+        mean_unpred = df['tournament_unpredictability'].dropna().mean()
+        df['tournament_unpredictability'] = df['tournament_unpredictability'].fillna(mean_unpred if not np.isnan(mean_unpred) else 0.0)
     
     if 'elo_surface_diff' in df.columns:
         df['elo_surface_diff'] = df['elo_surface_diff'].fillna(0)

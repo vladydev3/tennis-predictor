@@ -7,47 +7,79 @@ import json
 repo_root = Path(__file__).resolve().parents[1]
 sys.path.append(str(repo_root))
 import pandas as pd
-import requests
+import joblib
 from scripts.predict_match import predict_custom, predict_from_dataset  # keep for local fallback if needed
 
 
 @st.cache_data
 def load_data_and_model():
     repo = Path(__file__).resolve().parents[1]
-    df_path = repo / 'data' / 'atp_preprocessed.pkl'
+    # support both pickle and CSV preprocessed datasets
+    pkl_path = repo / 'data' / 'atp_preprocessed.pkl'
+    csv_path = repo / 'data' / 'atp_preprocessed.csv'
+    if pkl_path.exists():
+        df = pd.read_pickle(pkl_path)
+    elif csv_path.exists():
+        df = pd.read_csv(csv_path)
+        if 'Date' in df.columns:
+            df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+    else:
+        raise FileNotFoundError('No preprocessed dataset found (expected atp_preprocessed.pkl or atp_preprocessed.csv)')
+
     elo_path = repo / 'data' / 'elo_ratings.json'
-    df = pd.read_pickle(df_path)
+    tour_elo_path = repo / 'data' / 'tournament_elo_ratings.json'
+    tour_stats_path = repo / 'data' / 'tournament_stats.json'
     elo_ratings = None
     if elo_path.exists():
         with open(elo_path, 'r') as f:
             elo_ratings = json.load(f)
-    # We no longer load the model locally in Streamlit; predictions go through the API.
-    return df, elo_ratings
+    tour_elo = None
+    tour_stats = None
+    if tour_elo_path.exists():
+        with open(tour_elo_path, 'r') as f:
+            tour_elo = json.load(f)
+    if tour_stats_path.exists():
+        with open(tour_stats_path, 'r') as f:
+            tour_stats = json.load(f)
+
+    # Load model locally for direct prediction (if available)
+    model_path = repo / 'models' / 'rf_model.joblib'
+    model = None
+    if model_path.exists():
+        model = joblib.load(model_path)
+
+    return df, elo_ratings, tour_elo, tour_stats, model
 
 
 def main():
     st.title('Tennis match predictor')
     st.markdown('Interfaz para predecir el ganador de un partido usando el modelo entrenado')
 
-    df, elo_ratings = load_data_and_model()
-    api_url = st.sidebar.text_input('API base URL', value='http://localhost:8000')
+    df, elo_ratings, tour_elo, tour_stats, model = load_data_and_model()
 
-    def call_api_custom(match_info):
-        url = api_url.rstrip('/') + '/predict/custom'
-        payload = match_info.copy()
-        # convert pandas Timestamp to ISO
-        if isinstance(payload.get('Date'), pd.Timestamp):
-            payload['Date'] = payload['Date'].strftime('%Y-%m-%d')
-        r = requests.post(url, json=payload, timeout=10)
-        r.raise_for_status()
-        return r.json()
+    def call_local_custom(match_info):
+        if model is None:
+            raise RuntimeError('Model not found locally')
+        mi = match_info.copy()
+        if isinstance(mi.get('Date'), str):
+            mi['Date'] = pd.to_datetime(mi['Date'])
+        pred, proba, X = predict_custom(df, model, mi, elo_ratings, tour_elo, tour_stats)
+        return {
+            'predicted_winner_flag': int(pred),
+            'proba_player1_win': float(proba) if proba is not None else None,
+            'details': {'features': X.to_dict(orient='records')[0]}
+        }
 
-    def call_api_dataset(player1, player2, date_str):
-        url = api_url.rstrip('/') + '/predict/dataset'
-        payload = {'Player_1': player1, 'Player_2': player2, 'Date': date_str}
-        r = requests.post(url, json=payload, timeout=10)
-        r.raise_for_status()
-        return r.json()
+    def call_local_dataset(player1, player2, date_str):
+        if model is None:
+            raise RuntimeError('Model not found locally')
+        filt = {'Player_1': player1, 'Player_2': player2, 'Date': pd.to_datetime(date_str)}
+        pred, proba, row = predict_from_dataset(df, model, filt)
+        return {
+            'predicted_winner_flag': int(pred),
+            'proba_player1_win': float(proba) if proba is not None else None,
+            'details': {'matched_row': row[[c for c in ['Date', 'Tournament', 'Player_1', 'Player_2', 'Winner'] if c in row.index]].to_dict()}
+        }
 
     mode = st.radio('Modo', ['demo', 'dataset', 'custom'])
 
@@ -57,7 +89,7 @@ def main():
             sample = df.sample(1).iloc[0]
             date_str = pd.to_datetime(sample['Date']).strftime('%Y-%m-%d')
             try:
-                resp = call_api_dataset(sample['Player_1'], sample['Player_2'], date_str)
+                resp = call_local_dataset(sample['Player_1'], sample['Player_2'], date_str)
                 st.write({'Date': sample['Date'], 'Tournament': sample.get('Tournament'), 'Player_1': sample['Player_1'], 'Player_2': sample['Player_2'], 'Winner': sample.get('Winner')})
                 pred = resp['predicted_winner_flag']
                 proba = resp.get('proba_player1_win')
@@ -70,7 +102,7 @@ def main():
             except Exception as e:
                 st.error(f'Error calling API: {e}')
             # Paragraph ready to copy
-            copy_text = f"En el partido entre {row['Player_1']} y {row['Player_2']}, el modelo predice que {winner_name} será el ganador."
+            copy_text = f"En el partido entre {sample['Player_1']} y {sample['Player_2']}, el modelo predice que {winner_name} será el ganador."
             st.text_area('Texto listo para copiar', value=copy_text, height=80)
 
     elif mode == 'dataset':
@@ -85,7 +117,7 @@ def main():
             date_sel = st.selectbox('Date', dates)
             if st.button('Predecir (dataset)'):
                 try:
-                    resp = call_api_dataset(p1, p2, date_sel)
+                    resp = call_local_dataset(p1, p2, date_sel)
                     # API returns matched_row in details
                     matched = resp.get('details', {}).get('matched_row', {})
                     st.write(matched)
@@ -135,6 +167,7 @@ def main():
 
             date = st.date_input('Date')
             surface = st.selectbox('Surface', options=[''] + surfaces)
+            tournament = st.selectbox('Tournament', options=[''] + sorted(df['Tournament'].dropna().unique().tolist())) if 'Tournament' in df.columns else st.text_input('Tournament')
             series = st.selectbox('Series', options=[''] + series_opts) if series_opts else st.text_input('Series')
             court = st.selectbox('Court', options=[''] + court_opts) if court_opts else st.text_input('Court')
             rank1 = st.number_input('Rank 1', value=1000)
@@ -151,6 +184,7 @@ def main():
                 'Player_2': p2,
                 'Date': pd.to_datetime(date),
                 'Surface': surface if surface != '' else None,
+                'Tournament': tournament if tournament != '' else None,
                 'Rank_1': rank1,
                 'Rank_2': rank2,
                 'Pts_1': pts1,
@@ -161,10 +195,10 @@ def main():
                 'Court': court if court != '' else None,
             }
             try:
-                # send to API
+                # predict locally
                 payload = match_info.copy()
                 payload['Date'] = payload['Date'].strftime('%Y-%m-%d')
-                resp = call_api_custom(payload)
+                resp = call_local_custom(payload)
                 st.write('Features usadas:')
                 st.json(resp.get('details', {}).get('features', {}))
                 pred = resp['predicted_winner_flag']

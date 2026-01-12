@@ -143,6 +143,10 @@ def preprocess(in_path: Path, out_dir: Path, drop_incomplete_score=True):
         h2h_wins = defaultdict(lambda: defaultdict(int))  # h2h_wins[a][b] = wins of a vs b
         h2h_matches = defaultdict(lambda: defaultdict(int))
         elo_dict = {}  # keys: (player, surface) tuples, default value 1500
+        # Tournament-specific ELO and unpredictability trackers
+        tour_elo_dict = {}  # keys: (player, tournament) tuples, default value 1500
+        tour_matches = defaultdict(int)  # counts per tournament
+        tour_upsets = defaultdict(int)  # upsets per tournament (lower-tour-elo wins)
 
         p1_wr = []
         p2_wr = []
@@ -152,6 +156,11 @@ def preprocess(in_path: Path, out_dir: Path, drop_incomplete_score=True):
         p1_elo_surf = []
         p2_elo_surf = []
         elo_diff = []
+        # tournament-specific lists
+        p1_elo_tour = []
+        p2_elo_tour = []
+        elo_tour_diff = []
+        tour_unpredictability = []
 
         for _, row in df.iterrows():
             p1 = row['Player_1']
@@ -185,6 +194,25 @@ def preprocess(in_path: Path, out_dir: Path, drop_incomplete_score=True):
             p1_elo_surf.append(p1_elo_current)
             p2_elo_surf.append(p2_elo_current)
             elo_diff.append(p1_elo_current - p2_elo_current if surface is not None else np.nan)
+
+            # Tournament-specific ELO and unpredictability (based on previous matches)
+            tournament = row['Tournament'] if 'Tournament' in row and pd.notna(row['Tournament']) else None
+            if tournament is not None:
+                p1_tour_elo_current = tour_elo_dict.get((p1, tournament), 1500)
+                p2_tour_elo_current = tour_elo_dict.get((p2, tournament), 1500)
+                # unpredictability based on previous counts (before updating for this match)
+                matches_so_far = tour_matches.get(tournament, 0)
+                upsets_so_far = tour_upsets.get(tournament, 0)
+                tour_unpred = (upsets_so_far / matches_so_far) if matches_so_far > 0 else np.nan
+            else:
+                p1_tour_elo_current = np.nan
+                p2_tour_elo_current = np.nan
+                tour_unpred = np.nan
+
+            p1_elo_tour.append(p1_tour_elo_current)
+            p2_elo_tour.append(p2_tour_elo_current)
+            elo_tour_diff.append(p1_tour_elo_current - p2_tour_elo_current if tournament is not None else np.nan)
+            tour_unpredictability.append(tour_unpred)
 
             # now update histories and ELO with current match outcome
             winner = row['Winner']
@@ -223,6 +251,24 @@ def preprocess(in_path: Path, out_dir: Path, drop_incomplete_score=True):
                     elo_dict[(p1, surface)] = new_elo1
                     elo_dict[(p2, surface)] = new_elo2
 
+                # Update tournament-specific ELO and unpredictability trackers
+                if tournament is not None:
+                    # compute upset using tournament-specific ELOs prior to update
+                    prev_elo1 = tour_elo_dict.get((p1, tournament), 1500)
+                    prev_elo2 = tour_elo_dict.get((p2, tournament), 1500)
+                    # if the lower elo player wins, count as upset
+                    if (winner == p1 and prev_elo1 < prev_elo2) or (winner == p2 and prev_elo2 < prev_elo1):
+                        tour_upsets[tournament] += 1
+                    tour_matches[tournament] += 1
+
+                    # Update tournament ELOs using the same K
+                    E1_t = 1.0 / (1.0 + 10.0 ** ((prev_elo2 - prev_elo1) / 400.0))
+                    E2_t = 1.0 / (1.0 + 10.0 ** ((prev_elo1 - prev_elo2) / 400.0))
+                    new_tour_elo1 = prev_elo1 + K * (w1 - E1_t)
+                    new_tour_elo2 = prev_elo2 + K * (w2 - E2_t)
+                    tour_elo_dict[(p1, tournament)] = new_tour_elo1
+                    tour_elo_dict[(p2, tournament)] = new_tour_elo2
+
         df['p1_lastN_winrate'] = p1_wr
         df['p2_lastN_winrate'] = p2_wr
         df['p1_surf_lastN_winrate'] = p1_surf_wr
@@ -231,16 +277,31 @@ def preprocess(in_path: Path, out_dir: Path, drop_incomplete_score=True):
         df['p1_elo_surface'] = p1_elo_surf
         df['p2_elo_surface'] = p2_elo_surf
         df['elo_surface_diff'] = elo_diff
-        
-        # Convert elo_dict with tuple keys to a JSON-serializable nested dict
+
+        # tournament columns
+        df['p1_elo_tournament'] = p1_elo_tour
+        df['p2_elo_tournament'] = p2_elo_tour
+        df['elo_tournament_diff'] = elo_tour_diff
+        df['tournament_unpredictability'] = tour_unpredictability
+
+        # Convert elo_dict with tuple keys to a JSON-serializable nested dict (surface)
         elo_json_dict = defaultdict(dict)
         for (player, surface), elo in elo_dict.items():
             if player and surface:
                 elo_json_dict[player][surface] = elo
-        
-        return df, elo_json_dict
 
-    df, elo_ratings = add_historical_features(df, N=5, K=32)
+        # Convert tournament-specific elo dict to nested dict per player
+        tour_elo_json = defaultdict(dict)
+        for (player, tournament), elo in tour_elo_dict.items():
+            if player and tournament:
+                tour_elo_json[player][tournament] = elo
+
+        # tournament-level unpredictability summary
+        tour_unpred_json = {t: (tour_upsets[t] / tour_matches[t]) if tour_matches[t] > 0 else None for t in tour_matches}
+
+        return df, elo_json_dict, tour_elo_json, tour_unpred_json
+
+    df, elo_ratings, tour_elo_ratings, tour_unpredictability = add_historical_features(df, N=5, K=32)
 
     if 'Surface_raw' in df.columns:
         df.drop(['Surface_raw'], axis=1, inplace=True)
@@ -258,6 +319,19 @@ def preprocess(in_path: Path, out_dir: Path, drop_incomplete_score=True):
         with open(out_elo, 'w') as f:
             json.dump(elo_ratings, f, indent=2)
         print(f"Saved ELO ratings to {out_elo}")
+
+    # Save tournament-specific ELOs and unpredictability
+    if tour_elo_ratings:
+        out_tour_elo = out_dir / 'tournament_elo_ratings.json'
+        with open(out_tour_elo, 'w') as f:
+            json.dump(tour_elo_ratings, f, indent=2)
+        print(f"Saved tournament ELO ratings to {out_tour_elo}")
+
+    if tour_unpredictability:
+        out_tour_stats = out_dir / 'tournament_stats.json'
+        with open(out_tour_stats, 'w') as f:
+            json.dump(tour_unpredictability, f, indent=2)
+        print(f"Saved tournament stats (unpredictability) to {out_tour_stats}")
 
     print(f"Saved preprocessed CSV to {out_csv} and pickle to {out_pkl}")
     return df

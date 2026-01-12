@@ -75,7 +75,7 @@ def compute_hist_features(history_df, match_date, p1, p2, surface, N=20):
     }
 
 
-def build_feature_row(df_full, match_info, elo_ratings=None):
+def build_feature_row(df_full, match_info, elo_ratings=None, tour_elo_ratings=None, tour_stats=None):
     # df_full: preprocessed df (contains columns and one-hot categories)
     # match_info: dict with keys like Player_1, Player_2, Date (datetime), Surface, Rank_1, Rank_2, Pts_1, Pts_2, Round, Best of, Series, Court
     # elo_ratings: dict of dicts, e.g. {'Player Name': {'Surface': elo_score}}
@@ -102,13 +102,32 @@ def build_feature_row(df_full, match_info, elo_ratings=None):
     
     p1_elo = 1500
     p2_elo = 1500
-    if elo_ratings and p1_name and p2_name and surface:
+    if elo_ratings and p1_name and surface:
         p1_elo = elo_ratings.get(p1_name, {}).get(surface, 1500)
+    if elo_ratings and p2_name and surface:
         p2_elo = elo_ratings.get(p2_name, {}).get(surface, 1500)
-    
+
     row['p1_elo_surface'] = p1_elo
     row['p2_elo_surface'] = p2_elo
     row['elo_surface_diff'] = p1_elo - p2_elo
+
+    # Tournament-specific ELO features
+    tournament = match_info.get('Tournament')
+    p1_elo_t = 1500
+    p2_elo_t = 1500
+    if tour_elo_ratings and p1_name and tournament:
+        p1_elo_t = tour_elo_ratings.get(p1_name, {}).get(tournament, 1500)
+    if tour_elo_ratings and p2_name and tournament:
+        p2_elo_t = tour_elo_ratings.get(p2_name, {}).get(tournament, 1500)
+
+    row['p1_elo_tournament'] = p1_elo_t
+    row['p2_elo_tournament'] = p2_elo_t
+    row['elo_tournament_diff'] = p1_elo_t - p2_elo_t
+    # tournament unpredictability (if available)
+    if tour_stats and tournament:
+        row['tournament_unpredictability'] = tour_stats.get(tournament, None)
+    else:
+        row['tournament_unpredictability'] = np.nan
 
     # one-hot features: take columns from df_full
     for c in df_full.columns:
@@ -158,9 +177,9 @@ def predict_from_dataset(df, model, match_filter=None):
     return pred, proba, row
 
 
-def predict_custom(df, model, match_info, elo_ratings=None):
+def predict_custom(df, model, match_info, elo_ratings=None, tour_elo_ratings=None, tour_stats=None):
     feature_cols = model.feature_names_in_
-    rowdict = build_feature_row(df, match_info, elo_ratings)
+    rowdict = build_feature_row(df, match_info, elo_ratings, tour_elo_ratings, tour_stats)
     X = pd.DataFrame([rowdict]).reindex(columns=feature_cols).fillna(0)
     pred = model.predict(X)[0]
     proba = model.predict_proba(X)[0, 1] if hasattr(model, 'predict_proba') else None
@@ -189,6 +208,8 @@ if __name__ == '__main__':
     df_path = repo / 'data' / 'atp_preprocessed.pkl'
     model_path = repo / 'models' / 'rf_model.joblib'
     elo_path = repo / 'data' / 'elo_ratings.json'
+    tour_elo_path = repo / 'data' / 'tournament_elo_ratings.json'
+    tour_stats_path = repo / 'data' / 'tournament_stats.json'
     if not df_path.exists() or not model_path.exists():
         raise SystemExit('Preprocessed data or model not found. Run preprocess.py and train_model.py first.')
     df = pd.read_pickle(df_path)
@@ -198,6 +219,16 @@ if __name__ == '__main__':
         import json
         with open(elo_path, 'r') as f:
             elo_ratings = json.load(f)
+    tour_elo = None
+    tour_stats = None
+    if tour_elo_path.exists():
+        import json as _json
+        with open(tour_elo_path, 'r') as f:
+            tour_elo = _json.load(f)
+    if tour_stats_path.exists():
+        import json as _json2
+        with open(tour_stats_path, 'r') as f:
+            tour_stats = _json2.load(f)
 
     if args.mode == 'demo':
         # pick a random recent match from dataset (not the very first)
@@ -236,7 +267,7 @@ if __name__ == '__main__':
             'Series': None,
             'Court': None,
         }
-        pred, proba, X = predict_custom(df, model, match_info, elo_ratings)
+        pred, proba, X = predict_custom(df, model, match_info, elo_ratings, tour_elo, tour_stats)
         print('Features used:')
         print(X.to_dict(orient='records')[0])
         print('Predicted winner (1 means Player_1):', pred)
